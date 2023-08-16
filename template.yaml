@@ -1,0 +1,692 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Project Carnation: SAM Template to create a State Machine and associated services and IAM role to showcase map state 
+  example (Amazon SQS, Amazon SNS, Lambda).
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 128
+    Runtime: python3.9
+    Tracing: Active
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        DYNAMODB_TABLE_NAME: !Sub "${ProjectName}-${DynamoDBTableBaseName}-${Environment}-${AWS::Region}"
+        DYNAMODB_TABLE_NAME_1: "dummy"
+        SQS_QUEUE_URL: !GetAtt CarnationSQSQueue.Outputs.SQSQueueURL
+        DEAD_LETTER_QUEUE_URL: !GetAtt CarnationSQSDeadLetterQueue.Outputs.SQSQueueURL
+    Tags:
+      Environment: !Ref Environment
+      ProjectName: !Ref ProjectName
+Parameters:
+  ###################################### Project And Environment Name ##############################
+  ProjectName:
+    Default: carnation
+    Description: "The name of the project which will be used as a prefix for all the resources."
+    Type: String
+    MinLength: 5
+    MaxLength: 30
+    AllowedPattern: "[a-z]*"
+    ConstraintDescription: "The length should be between 5 and 30, must contain only lowercase alphabets."
+  Environment:
+    Default: devl
+    Description: "The environment name (devl / test / prod)."
+    Type: String
+    AllowedValues: ["devl", "test", "prod"]
+    ConstraintDescription: "The environment name must be devl / test or prod"
+  CodeRepositoryS3Bucket:
+    Default: subhamay-projects-repository-us-east-1
+    Type: String
+    Description: The S3 bucket storing the code repository (containing nested CloudFormation templates and the lambda code zip files)
+  ###################################### KMS #######################################################
+  KmsMasterKeyAlias:
+    Default: "SB-KMS"
+    Description: "The KMS Master Key Alias to be used for server side encryption."
+    Type: String
+    MinLength: 5
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9/-]*"
+    ConstraintDescription: "The length of the KMS Key Alias should be beteen 5 and 20 and can only contain lowercase alphanumeric characters and dash."
+  KmsMasterKeyId:
+    Default: e4c733c5-9fbe-4a90-bda1-6f0362bc9b89
+    Type: String
+    MinLength: 36
+    MaxLength: 36
+    AllowedPattern: "[a-z0-9-]*"
+    ConstraintDescription: "The length of the KMS Key Id should be 36 and must be lowercase alphabets, numbers and dash."
+  ###################################### SQS Queue #################################################
+  SQSQueueBaseName:
+    Type: String
+    Description: "The SQS queue base name."
+    Default: "sqs-queue"
+    MinLength: 8
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9-]*"
+    ConstraintDescription: The length should be between 8 and 20, must contain only alphanumeric character and dash (-).
+  SQSDeadLetterQueueBaseName:
+    Type: String
+    Description: "The SQS queue base name."
+    Default: "dead-letter-queue"
+    MinLength: 8
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9-]*"
+    ConstraintDescription: The length should be between 8 and 20, must contain only alphanumeric character and dash (-).
+  DelaySeconds:
+    Type: Number
+    Description: "Delay seconds of the SQS queue."
+    Default: 0
+    MinValue: 0
+    MaxValue: 900
+  MaximumMessageSize:
+    Type: Number
+    Description: "Maximum message size."
+    Default: 262144
+    MinValue: 1024
+    MaxValue: 262144
+  MessageRetentionPeriod:
+    Type: Number
+    Description: "Message retention period."
+    Default: 345600
+    MinValue: 60
+    MaxValue: 1209600
+  ReceiveMessageWaitTimeSeconds:
+    Type: Number
+    Description: "Received Message wait time in seconds."
+    Default: 0
+    MinValue: 0
+    MaxValue: 20
+  VisibilityTimeout:
+    Type: Number
+    Description: "Message visibility timeout."
+    Default: 300
+    MinValue: 1
+    MaxValue: 43200
+  ###################################### SNS Topic #################################################
+  SNSTopicBaseName:
+    Default: "sns-topic"
+    Description: "The base name of the SNS Topic."
+    Type: String
+    MinLength: 8
+    MaxLength: 40
+    AllowedPattern: "[a-zA-Z0-9-]*"
+    ConstraintDescription: The length should be between 8 and 40, must contain only alphanumeric character and dash (-).
+  SNSTopicDisplayName:
+    Default: "SNS Topic name for sending result notification"
+    Description: "The Base Name of the SNS Topic."
+    Type: String
+    MinLength: 10
+    MaxLength: 100
+    AllowedPattern: "[a-zA-Z0-9-. _]*"
+    ConstraintDescription: "The length should be between 30 and 200, must alphanumeric character, space, dot and underscore."
+  SNSSubscriptionEmail:
+    Default: "subhamay.aws@mailinator.com"
+    Description: "The subscription email for the SNS Topic."
+    Type: String
+    MinLength: 10
+    MaxLength: 100
+  ###################################### DynamoDB Table ############################################
+  DynamoDBTableBaseName:
+    Default: random-strings
+    Description: "The base name of the Dynamodb table used for storing random string.Region and environment will be added as suffix."
+    Type: String
+    MinLength: 10
+    MaxLength: 40
+    AllowedPattern: "[a-z][a-z0-9-]*"
+    ConstraintDescription: "The length should be between 10 and 40, must contain only lowercase letter, number, dash and should start with a letter."
+  DynamoDBTablePartitionKey:
+    Default: sequenceNo
+    Type: String
+    MinLength: 2
+    MaxLength: 30
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9\-_]*'
+    ConstraintDescription: "Must begin with a letter and contain only alphanumeric characters."
+  DynamoDBTablePartitionKeyAttributeType:
+    Default: "N"
+    Type: String
+    AllowedValues: ["N", "S", "B"]
+    ConstraintDescription: "The datatype should be either N (Number), S (String) or B (Binary)"
+  DynamoDBTableSortKey:
+    Default: generatedUnixTime
+    Type: String
+    MinLength: 2
+    MaxLength: 30
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9\-_]*'
+    ConstraintDescription: "Must begin with a letter and contain only alphanumeric characters."
+  DynamoDBTableSortKeyAttributeType:
+    Default: "N"
+    Type: String
+    AllowedValues: ["N", "S", "B"]
+    ConstraintDescription: "the Datatype Should Be Either N (number), S (string) Or B (binary)"
+  ###################################### Lambda Function ###########################################
+  LambdaExecutionRoleBaseName:
+    Default: lambda-execution-role
+    Description: Lambda execution IAM role name.
+    Type: String
+    MinLength: 5
+    MaxLength: 50
+    AllowedPattern: "[a-zA-Z-]*"
+    ConstraintDescription: "The length should be between 5 and 50, , must contain only lowercase letters,numbers and hyphen (-)."
+  LambdaExecutionPolicyBaseName:
+    Default: lambda-execution-policy
+    Description: Lambda execution IAM policy name.
+    Type: String
+    MinLength: 5
+    MaxLength: 50
+    AllowedPattern: "[a-zA-Z-]*"
+    ConstraintDescription: "The length should be between 5 and 50, , must contain only lowercase letters,numbers and hyphen (-)."
+  LambdaFunctionGenDataBaseName:
+    Default: "generate-data"
+    Description: "Processing Lambda function base name."
+    Type: String
+    MinLength: 10
+    MaxLength: 40
+    AllowedPattern: "[a-z-]*"
+    ConstraintDescription: The length should be between 10 and 40, must contain only lowercase letters,numbers and dash(-) and should start with a letter.
+  LambdaFunctionPutDataBaseName:
+    Default: "insert-data"
+    Description: Integration Lambda function base name.
+    Type: String
+    MinLength: 10
+    MaxLength: 40
+    AllowedPattern: "[a-z-]*"
+    ConstraintDescription: "Must be between 10 and 40 characters long and begin with a letter and can contain lowercase letter, number or hyphen (-)."
+  ###################################### Step Function #############################################
+  StepFunctionExecutionRoleBaseName:
+    Default: step-function-execution-role
+    Description: Step Function execution IAM role name.
+    Type: String
+    MinLength: 5
+    MaxLength: 50
+    AllowedPattern: "[a-zA-Z-]*"
+    ConstraintDescription: The length should be between 5 and 50, , must contain only lowercase letters,numbers and hyphen (-).
+  StepFunctionExecutionPolicyBaseName:
+    Default: step-function-execution-policy
+    Description: Step Function execution IAM policy name
+    Type: String
+    MinLength: 5
+    MaxLength: 50
+    AllowedPattern: "[a-zA-Z-]*"
+    ConstraintDescription: The length should be between 5 and 50, must contain only lowercase letters,numbers and hyphen (-).
+  StepFunctionBaseName:
+    Default: state-machine
+    Description: Step Function base name.
+    Type: String
+    MinLength: 5
+    MaxLength: 50
+    AllowedPattern: "[a-zA-Z-]*"
+    ConstraintDescription: The length should be between 5 and 50, must contain only lowecase letters, numbers and hyphen (-).
+  ###################################### 1. Lambda Invocations CW Alarm ############################
+  AlarmThresholdLambdaInvocations:
+    Default: 5
+    Description: "The Cloudwatch Alarm threshold- number of Lambda executions after which the alarm will be triggered."
+    Type: Number
+    MinValue: 1
+    MaxValue: 99
+    ConstraintDescription: must be between 70 and 99.
+  AlarmPeriodInSecondsLambdaInvocations:
+    Default: 900
+    Description: "The period, in seconds, over which the statistic is applied."
+    Type: Number
+    MinValue: 10
+    MaxValue: 3600
+    ConstraintDescription: "Must be between 10 and 3600 seconds."
+  DatapointsToAlarmLambdaInvocations: 
+    Default: 1
+    Description: "The CloudWatch Alarm threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+    ConstraintDescription: must be between 1 and 10 seconds.
+  EvaluationPeriodsForLambdaInvocations: 
+    Default: 1
+    Description: "The Number of periods over which data is compared to the specified threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 3
+    ConstraintDescription: "Must be between 1 and 3 Hours."
+  AlarmComparisonOperatorLambdaInvocations:
+    Default: "GreaterThanOrEqualToThreshold"
+    Description: "The Lambda Invocations Alarm Comparison Operator."
+    Type: String
+    AllowedValues: [GreaterThanThreshold, GreaterThanOrEqualToThreshold, LessThanThreshold, LessThanOrEqualToThreshold]
+  ###################################### 2. Lambda Error CW Alarm ##################################
+  AlarmThresholdLambdaErrors:
+    Default: 2
+    Description: "The Cloudwatch Alarm threshold - number of Lambda executions after which the alarm will be triggered."
+    Type: Number
+    MinValue: 1
+    MaxValue: 99
+    ConstraintDescription: "Must be between 1 and 99."
+  AlarmPeriodInSecondsLambdaErrors:
+    Default: 900
+    Description: "The period, in seconds, over which the statistic is applied."
+    Type: Number
+    MinValue: 10
+    MaxValue: 3600
+    ConstraintDescription: "Must be between 10 and 3600 seconds."
+  DatapointsToAlarmLambdaErrors: 
+    Default: 1
+    Description: "The CloudWatch Alarm threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+    ConstraintDescription: "Must be between 1 and 10 seconds."
+  EvaluationPeriodsForLambdaErrors: 
+    Default: 1
+    Description: "The number of periods over which data is compared to the specified threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 3
+    ConstraintDescription: "Must be between 1 and 3 Hours."
+  AlarmComparisonOperatorLambdaErrors:
+    Default: "GreaterThanOrEqualToThreshold"
+    Description: "The Lambda Errors Alarm comparison operator."
+    Type: String
+    AllowedValues: [GreaterThanThreshold, GreaterThanOrEqualToThreshold, LessThanThreshold, LessThanOrEqualToThreshold]
+  ###################################### 3. Lambda Throttles CW Alarm ##############################
+  AlarmThresholdLambdaThrottles:
+    Default: 3
+    Description: "The Cloudwatch Alarm threshold - the number of Lambda throttles after which the alarm will be triggered."
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+    ConstraintDescription: "Must be between 1 and 10."
+  AlarmPeriodInSecondsLambdaThrottles:
+    Default: 600
+    Description: "The Period, in seconds, over which the statistic is applied."
+    Type: Number
+    MinValue: 10
+    MaxValue: 3600
+    ConstraintDescription: "Must be between 10 and 3600 seconds."
+  DatapointsToAlarmLambdaThrottles: 
+    Default: 1
+    Description: "The CloudWatch Alarm Threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+    ConstraintDescription: "Must be between 1 and 10 seconds."
+  EvaluationPeriodsForLambdaThrottles: 
+    Default: 1
+    Description: "The Number of periods over which data is compared to the specified threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 3
+    ConstraintDescription: "Must be between 1 and 3 Hours."
+  AlarmComparisonOperatorLambdaThrottles:
+    Default: "GreaterThanOrEqualToThreshold"
+    Description: "The Lambda Throttles Alarm Comparison Operator."
+    Type: String
+    AllowedValues: [GreaterThanThreshold, GreaterThanOrEqualToThreshold, LessThanThreshold, LessThanOrEqualToThreshold]
+  ###################################### 4. Lambda Duration CW Alarm ###############################
+  AlarmThresholdLambdaDuration:
+    Default: 500
+    Description: "The CloudWatch Alarm Threshold - the number of milliseconds after which the alarm will be triggered."
+    Type: Number
+    MinValue: 0
+    MaxValue: 900000
+    ConstraintDescription: "Must be between 0 and 900000."
+  AlarmPeriodInSecondsLambdaDuration:
+    Default: 900
+    Description: "The Period, in seconds, over which the statistic is applied."
+    Type: Number
+    MinValue: 10
+    MaxValue: 3600
+    ConstraintDescription: "Must be between 10 and 3600 seconds."
+  DatapointsToAlarmLambdaDuration: 
+    Default: 1
+    Description: "The CloudWatch Alarm threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+    ConstraintDescription: "Must be between 1 and 10 seconds."
+  EvaluationPeriodsForLambdaDuration: 
+    Default: 1
+    Description: "The Number of periods over which data is compared to the specified threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 3
+    ConstraintDescription: "Must be between 1 and 3 Hours."
+  AlarmComparisonOperatorLambdaDuration:
+    Default: "GreaterThanOrEqualToThreshold"
+    Description: "The Lambda Duration alarm comparison operator."
+    Type: String
+    AllowedValues: [GreaterThanThreshold, GreaterThanOrEqualToThreshold, LessThanThreshold, LessThanOrEqualToThreshold]
+  ###################################### 5. Lambda Concurrent Executions CW Alarm ##################
+  AlarmThresholdLambdaConcurrentExecutions:
+    Default: 3
+    Description: "The CloudWatch Alarm Threshold - after the number of concurrent executions the Alarm will be triggered."
+    Type: Number
+    MinValue: 0
+    MaxValue: 10
+    ConstraintDescription: "Must be between 0 and 10."
+  AlarmPeriodInSecondsLambdaConcurrentExecutions:
+    Default: 60
+    Description: "The Period, in seconds, over which the statistic is applied."
+    Type: Number
+    MinValue: 10
+    MaxValue: 3600
+    ConstraintDescription: "Must be between 10 and 3600 seconds."
+  DatapointsToAlarmLambdaConcurrentExecutions: 
+    Default: 1
+    Description: "The CloudWatch Alarm Threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 10
+    ConstraintDescription: "Must be between 1 and 10 seconds."
+  EvaluationPeriodsForLambdaConcurrentExecutions: 
+    Default: 1
+    Description: "The Number of periods over which data is compared to the specified threshold."
+    Type: Number
+    MinValue: 1
+    MaxValue: 3
+    ConstraintDescription: "Must be between 1 and 3 Hours."
+  AlarmComparisonOperatorLambdaConcurrentExecutions:
+    Default: "GreaterThanOrEqualToThreshold"
+    Description: "The Lambda concurrent executions alarm comparison operator."
+    Type: String
+    AllowedValues: [GreaterThanThreshold, GreaterThanOrEqualToThreshold, LessThanThreshold, LessThanOrEqualToThreshold]
+
+Resources:
+  ###################################### SNS Topic with Subscription ###############################
+  CarnationSNSTopic:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${CodeRepositoryS3Bucket}.s3.amazonaws.com/0063-carnation/cft/nested-stacks/sns-stack.yaml'
+      Parameters:  
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        TopicBaseName: !Ref SNSTopicBaseName
+        TopicDisplayName: !Ref SNSTopicDisplayName 
+        SubscriptionEmail: !Ref SNSSubscriptionEmail
+        KmsMasterKeyAlias: !Ref KmsMasterKeyAlias
+      TimeoutInMinutes: 15
+  ###################################### SQS Queue #################################################
+  CarnationSQSQueue:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${CodeRepositoryS3Bucket}.s3.amazonaws.com/0063-carnation/cft/nested-stacks/sqs-stack.yaml'
+      Parameters:  
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        SQSQueueBaseName: !Ref SQSQueueBaseName
+        DelaySeconds: !Ref DelaySeconds 
+        KmsMasterKeyAlias: !Ref KmsMasterKeyAlias
+        MaximumMessageSize: !Ref MaximumMessageSize
+        MessageRetentionPeriod: !Ref MessageRetentionPeriod
+        ReceiveMessageWaitTimeSeconds: !Ref ReceiveMessageWaitTimeSeconds
+        VisibilityTimeout: !Ref VisibilityTimeout
+      TimeoutInMinutes: 15
+  ###################################### SQS Dead Letter Queue #####################################
+  CarnationSQSDeadLetterQueue:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${CodeRepositoryS3Bucket}.s3.amazonaws.com/0063-carnation/cft/nested-stacks/sqs-stack.yaml'
+      Parameters:  
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        SQSQueueBaseName: !Ref SQSDeadLetterQueueBaseName
+        DelaySeconds: !Ref DelaySeconds 
+        KmsMasterKeyAlias: !Ref KmsMasterKeyAlias
+        MaximumMessageSize: !Ref MaximumMessageSize
+        MessageRetentionPeriod: !Ref MessageRetentionPeriod
+        ReceiveMessageWaitTimeSeconds: !Ref ReceiveMessageWaitTimeSeconds
+        VisibilityTimeout: !Ref VisibilityTimeout
+      TimeoutInMinutes: 15
+  ###################################### DynamoDB Table ############################################
+  CarnationDynamoDBTable:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${CodeRepositoryS3Bucket}.s3.amazonaws.com/0063-carnation/cft/nested-stacks/dynamodb-stack.yaml"
+      Parameters:  
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        DynamoDBTableBaseName: !Ref DynamoDBTableBaseName
+        DynamoDBTablePartitionKey: !Ref DynamoDBTablePartitionKey 
+        DynamoDBTablePartitionKeyAttributeType: !Ref DynamoDBTablePartitionKeyAttributeType
+        DynamoDBTableSortKey: !Ref DynamoDBTableSortKey
+        DynamoDBTableSortKeyAttributeType: !Ref DynamoDBTableSortKeyAttributeType
+        DynamoDBTableKmsMasterKeyAlias: !Ref KmsMasterKeyAlias
+      TimeoutInMinutes: 15  ###################################### Lambda And State Machine Execution Role ###################
+  CarnationIAMRole:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${CodeRepositoryS3Bucket}.s3.amazonaws.com/0063-carnation/cft/nested-stacks/iam-role-stack.yaml'
+      Parameters:     
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        LambdaExecutionRoleBaseName: !Ref LambdaExecutionRoleBaseName
+        LambdaExecutionPolicyBaseName: !Ref LambdaExecutionPolicyBaseName
+        LambdaFunctionOneBaseName: !Ref LambdaFunctionGenDataBaseName
+        LambdaFunctionTwoBaseName: !Ref LambdaFunctionPutDataBaseName
+        StepFunctionExecutionRoleBaseName: !Ref StepFunctionExecutionRoleBaseName
+        StepFunctionExecutionPolicyBaseName: !Ref StepFunctionExecutionPolicyBaseName
+        SNSTopicBaseName: !Ref SNSTopicBaseName
+        DynamoDBTableBaseName: !Ref DynamoDBTableBaseName
+        SQSQueueBaseName: !Ref SQSQueueBaseName
+        SQSDeadLetterQueueBaseName: !Ref SQSDeadLetterQueueBaseName
+        KmsMasterKeyId: !Ref KmsMasterKeyId
+      TimeoutInMinutes: 15
+  ###################################### Generate Data Lambda Function #############################
+  CarnationGenDataLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${LambdaFunctionGenDataBaseName}-${Environment}-${AWS::Region}'
+      Description: "The Lambda Function to be used for callback functionality."
+      PackageType: Zip
+      CodeUri: 
+        Bucket: !Ref CodeRepositoryS3Bucket
+        Key: 0063-carnation/code/python/carnation_gen_data.zip
+      Handler: carnation_gen_data.handler
+      Role: !GetAtt CarnationIAMRole.Outputs.LambdaExecutionRoleArn
+  ###################################### Process Data Lambda Function ##############################
+  CarnationPutDataLambdaFunction:
+    Type: AWS::Serverless::Function 
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${LambdaFunctionPutDataBaseName}-${Environment}-${AWS::Region}'
+      Description: "Celosia Lambda To Generate Some Random Data"
+      PackageType: Zip
+      CodeUri: 
+        Bucket: !Ref CodeRepositoryS3Bucket
+        Key: 0063-carnation/code/python/carnation_put_data.zip
+      Handler: carnation_put_data.handler
+      Role: !GetAtt CarnationIAMRole.Outputs.LambdaExecutionRoleArn
+  ###################################### State Machine #############################################
+  CarnationStateMachineLogGroup:
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      KmsKeyId: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsMasterKeyId}'
+      LogGroupName: !Sub '/aws/states/${ProjectName}-${StepFunctionBaseName}-${Environment}-${AWS::Region}'
+      RetentionInDays: 14
+      Tags: 
+      - Key: ProjectName
+        Value: !Ref ProjectName
+      - Key:  Environment
+        Value: !Ref Environment
+  CarnationStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub '${ProjectName}-${StepFunctionBaseName}-${Environment}-${AWS::Region}'
+      DefinitionUri: 
+        Bucket: !Ref CodeRepositoryS3Bucket
+        Key: 0063-carnation/cft/state-machine/state-machine.asl.json
+        Version: KbGLLqiS5EWj2wssvsoG5gEChDvrjxYy
+      Role: !GetAtt CarnationIAMRole.Outputs.StepFunctionExecutionRoleArn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt CarnationStateMachineLogGroup.Arn
+        Level: ALL
+        IncludeExecutionData: false
+      DefinitionSubstitutions:
+        GenDataLambda: !GetAtt CarnationGenDataLambdaFunction.Arn
+        PutDataLambda: !GetAtt CarnationPutDataLambdaFunction.Arn
+        SQSQueueURL: !GetAtt CarnationSQSQueue.Outputs.SQSQueueURL
+      Tags:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+  ##################################### CloudWatch Alarms - Generate Data Lambda ###################
+  CarnationGenerateDataLambdaCloudWatchAlarms:
+    DependsOn:
+      - CarnationGenDataLambdaFunction
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${CodeRepositoryS3Bucket}.s3.amazonaws.com/0063-carnation/cft/nested-stacks/cloudwatch-stack.yaml'
+      Parameters:  
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        LambdaFunctionName: !Sub '${ProjectName}-${LambdaFunctionGenDataBaseName}-${Environment}-${AWS::Region}'
+        SNSTopicName: !Sub '${ProjectName}-${SNSTopicBaseName}-${Environment}-${AWS::Region}'
+        AlarmNameLambdaInvocations: !Sub '${ProjectName}-${LambdaFunctionGenDataBaseName}-invocations-alarm'
+        AlarmThresholdLambdaInvocations: !Ref AlarmThresholdLambdaInvocations
+        AlarmPeriodInSecondsLambdaInvocations: !Ref AlarmPeriodInSecondsLambdaInvocations
+        DatapointsToAlarmLambdaInvocations: !Ref DatapointsToAlarmLambdaInvocations
+        EvaluationPeriodsForLambdaInvocations: !Ref EvaluationPeriodsForLambdaInvocations
+        AlarmComparisonOperatorLambdaInvocations: !Ref AlarmComparisonOperatorLambdaInvocations
+        AlarmNameLambdaErrors: !Sub '${ProjectName}-${LambdaFunctionGenDataBaseName}-errors-alarm'
+        AlarmThresholdLambdaErrors: !Ref AlarmThresholdLambdaErrors
+        AlarmPeriodInSecondsLambdaErrors: !Ref AlarmPeriodInSecondsLambdaErrors
+        DatapointsToAlarmLambdaErrors: !Ref DatapointsToAlarmLambdaErrors
+        EvaluationPeriodsForLambdaErrors: !Ref EvaluationPeriodsForLambdaErrors
+        AlarmComparisonOperatorLambdaErrors: !Ref AlarmComparisonOperatorLambdaErrors
+        AlarmNameLambdaThrottles: !Sub '${ProjectName}-${LambdaFunctionGenDataBaseName}-throttles-alarm'
+        AlarmThresholdLambdaThrottles: !Ref AlarmThresholdLambdaThrottles
+        AlarmPeriodInSecondsLambdaThrottles: !Ref AlarmPeriodInSecondsLambdaThrottles
+        DatapointsToAlarmLambdaThrottles: !Ref DatapointsToAlarmLambdaThrottles
+        EvaluationPeriodsForLambdaThrottles: !Ref EvaluationPeriodsForLambdaThrottles
+        AlarmComparisonOperatorLambdaThrottles: !Ref AlarmComparisonOperatorLambdaThrottles
+        AlarmNameLambdaDuration: !Sub '${ProjectName}-${LambdaFunctionGenDataBaseName}-duration-alarm'
+        AlarmThresholdLambdaDuration: !Ref AlarmThresholdLambdaDuration
+        AlarmPeriodInSecondsLambdaDuration: !Ref AlarmPeriodInSecondsLambdaDuration
+        DatapointsToAlarmLambdaDuration: !Ref DatapointsToAlarmLambdaDuration
+        EvaluationPeriodsForLambdaDuration: !Ref EvaluationPeriodsForLambdaDuration
+        AlarmComparisonOperatorLambdaDuration: !Ref AlarmComparisonOperatorLambdaDuration
+        AlarmNameLambdaConcurrentExecutions: !Sub '${ProjectName}-${LambdaFunctionGenDataBaseName}-conc-exec-alarm'
+        AlarmThresholdLambdaConcurrentExecutions: !Ref AlarmThresholdLambdaConcurrentExecutions
+        AlarmPeriodInSecondsLambdaConcurrentExecutions: !Ref AlarmPeriodInSecondsLambdaConcurrentExecutions
+        DatapointsToAlarmLambdaConcurrentExecutions: !Ref DatapointsToAlarmLambdaConcurrentExecutions
+        EvaluationPeriodsForLambdaConcurrentExecutions: !Ref EvaluationPeriodsForLambdaConcurrentExecutions
+        AlarmComparisonOperatorLambdaConcurrentExecutions: !Ref AlarmComparisonOperatorLambdaConcurrentExecutions
+      TimeoutInMinutes: 15
+  ###################################### CloudWatch Alarms - Processing Data Lambda ################
+  CarnationProcessDataLambdaCloudWatchAlarms:
+    DependsOn:
+      - CarnationPutDataLambdaFunction
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${CodeRepositoryS3Bucket}.s3.amazonaws.com/0063-carnation/cft/nested-stacks/cloudwatch-stack.yaml'
+      Parameters:  
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        LambdaFunctionName: !Sub '${ProjectName}-${LambdaFunctionPutDataBaseName}-${Environment}-${AWS::Region}'
+        SNSTopicName: !Sub '${ProjectName}-${SNSTopicBaseName}-${Environment}-${AWS::Region}'
+        AlarmNameLambdaInvocations: !Sub '${ProjectName}-${LambdaFunctionPutDataBaseName}-invocations-alarm'
+        AlarmThresholdLambdaInvocations: !Ref AlarmThresholdLambdaInvocations
+        AlarmPeriodInSecondsLambdaInvocations: !Ref AlarmPeriodInSecondsLambdaInvocations
+        DatapointsToAlarmLambdaInvocations: !Ref DatapointsToAlarmLambdaInvocations
+        EvaluationPeriodsForLambdaInvocations: !Ref EvaluationPeriodsForLambdaInvocations
+        AlarmComparisonOperatorLambdaInvocations: !Ref AlarmComparisonOperatorLambdaInvocations
+        AlarmNameLambdaErrors: !Sub '${ProjectName}-${LambdaFunctionPutDataBaseName}-errors-alarm'
+        AlarmThresholdLambdaErrors: !Ref AlarmThresholdLambdaErrors
+        AlarmPeriodInSecondsLambdaErrors: !Ref AlarmPeriodInSecondsLambdaErrors
+        DatapointsToAlarmLambdaErrors: !Ref DatapointsToAlarmLambdaErrors
+        EvaluationPeriodsForLambdaErrors: !Ref EvaluationPeriodsForLambdaErrors
+        AlarmComparisonOperatorLambdaErrors: !Ref AlarmComparisonOperatorLambdaErrors
+        AlarmNameLambdaThrottles: !Sub '${ProjectName}-${LambdaFunctionPutDataBaseName}-throttles-alarm'
+        AlarmThresholdLambdaThrottles: !Ref AlarmThresholdLambdaThrottles
+        AlarmPeriodInSecondsLambdaThrottles: !Ref AlarmPeriodInSecondsLambdaThrottles
+        DatapointsToAlarmLambdaThrottles: !Ref DatapointsToAlarmLambdaThrottles
+        EvaluationPeriodsForLambdaThrottles: !Ref EvaluationPeriodsForLambdaThrottles
+        AlarmComparisonOperatorLambdaThrottles: !Ref AlarmComparisonOperatorLambdaThrottles
+        AlarmNameLambdaDuration: !Sub '${ProjectName}-${LambdaFunctionPutDataBaseName}-duration-alarm'
+        AlarmThresholdLambdaDuration: !Ref AlarmThresholdLambdaDuration
+        AlarmPeriodInSecondsLambdaDuration: !Ref AlarmPeriodInSecondsLambdaDuration
+        DatapointsToAlarmLambdaDuration: !Ref DatapointsToAlarmLambdaDuration
+        EvaluationPeriodsForLambdaDuration: !Ref EvaluationPeriodsForLambdaDuration
+        AlarmComparisonOperatorLambdaDuration: !Ref AlarmComparisonOperatorLambdaDuration
+        AlarmNameLambdaConcurrentExecutions: !Sub '${ProjectName}-${LambdaFunctionPutDataBaseName}-conc-exec-alarm'
+        AlarmThresholdLambdaConcurrentExecutions: !Ref AlarmThresholdLambdaConcurrentExecutions
+        AlarmPeriodInSecondsLambdaConcurrentExecutions: !Ref AlarmPeriodInSecondsLambdaConcurrentExecutions
+        DatapointsToAlarmLambdaConcurrentExecutions: !Ref DatapointsToAlarmLambdaConcurrentExecutions
+        EvaluationPeriodsForLambdaConcurrentExecutions: !Ref EvaluationPeriodsForLambdaConcurrentExecutions
+        AlarmComparisonOperatorLambdaConcurrentExecutions: !Ref AlarmComparisonOperatorLambdaConcurrentExecutions
+      TimeoutInMinutes: 15
+Outputs:
+  CarnationLambdaFunctionExecutionRoleArn:
+    Description: Carnation Lambda Execution Role Arn
+    Value: !GetAtt CarnationIAMRole.Outputs.LambdaExecutionRoleArn
+  CarnationStepFunctionExecutionRoleArn:
+    Description: Carnation Step Function Execution Role Arn.
+    Value: !GetAtt CarnationIAMRole.Outputs.StepFunctionExecutionRoleArn
+  CarnationSQSQueueArn:
+    Description: SQS Queue Arn
+    Value: !GetAtt CarnationSQSQueue.Outputs.SQSQueueArn
+  CarnationSQSQueueURL:
+    Description: SQS Queue URL
+    Value: !GetAtt CarnationSQSQueue.Outputs.SQSQueueURL
+  CarnationSNSTopicArn:
+    Description: Report Result SNS Topic Arn
+    Value: !GetAtt CarnationSNSTopic.Outputs.SNSTopicArn
+  CarnationSNSSubscriptionArn:
+    Description: SNS Subscription Arn
+    Value: !GetAtt CarnationSNSTopic.Outputs.SNSSubscriptionArn
+  CarnationGenerateDataLambdaFunctionArn:
+    Description: The Processing Lambda Function Arn
+    Value: !GetAtt CarnationGenDataLambdaFunction.Arn
+  CarnationProcessDataLambdaFunctionArn:
+    Description: The Integration Lambda Function Arn
+    Value: !GetAtt CarnationPutDataLambdaFunction.Arn
+  CarnationStepFunctionLogGroupArn:
+    Description: Step Function Log Group Arn
+    Value: !GetAtt CarnationStateMachineLogGroup.Arn
+  CarnationStepFunctionArn: 
+    Description: Step Function Arn
+    Value: !Ref CarnationStateMachine
+  CarnationGenerateDataLambdaInvocationsAlarmArn:
+    Description: Carnation Integration Lambda Invocations Alarm Arn 
+    Value: !GetAtt CarnationGenerateDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaInvocationsArn
+  CarnationGenerateDataLambdaErrorsAlarmArn:
+    Description: Carnation Integration Lambda Errors Alarm Arn 
+    Value: !GetAtt CarnationGenerateDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaErrorsArn
+  CarnationGenerateDataLambdaThrottlesAlarmArn:
+    Description: Carnation Integration Lambda Throttles Alarm Arn 
+    Value: !GetAtt CarnationGenerateDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaThrottlesArn
+  CarnationGenerateDataLambdaDurationAlarmArn:
+    Description: Carnation Integration ambda Duration Alarm Arn 
+    Value: !GetAtt CarnationGenerateDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaDurationArn
+  CarnationGenerateDataLambdaConcurrentExecutionsAlarmArn:
+    Description: Carnation Integration Lambda Concurrent Executions Alarm Arn 
+    Value: !GetAtt CarnationGenerateDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaConurrentExecutionsArn
+  CarnationProcessDataLambdaInvocationsAlarmArn:
+    Description: Carnation Processing Lambda Invocations Alarm Arn 
+    Value: !GetAtt CarnationProcessDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaInvocationsArn
+  CarnationProcessDataLambdaErrorsAlarmArn:
+    Description: Carnation Processing Lambda Errors Alarm Arn 
+    Value: !GetAtt CarnationProcessDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaErrorsArn
+  CarnationProcessDataLambdaThrottlesAlarmArn:
+    Description: Carnation Processing Lambda Throttles Alarm Arn 
+    Value: !GetAtt CarnationProcessDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaThrottlesArn
+  CarnationProcessDataLambdaDurationAlarmArn:
+    Description: Carnation LProcessing ambda Duration Alarm Arn 
+    Value: !GetAtt CarnationProcessDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaDurationArn
+  CarnationProcessDataLambdaConcurrentExecutionsAlarmArn:
+    Description: Carnation Processing Lambda Concurrent Executions Alarm Arn 
+    Value: !GetAtt CarnationProcessDataLambdaCloudWatchAlarms.Outputs.CloudWatchAlarmLambdaConurrentExecutionsArn

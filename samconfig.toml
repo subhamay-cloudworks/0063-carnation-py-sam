@@ -1,0 +1,13 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "carnation-sam-stack"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-e4e0k7l11zg1"
+s3_prefix = "carnation-sam-stack"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_NAMED_IAM"
+disable_rollback = true
+parameter_overrides = "ProjectName=\"carnation\" Environment=\"devl\" CodeRepositoryS3Bucket=\"subhamay-projects-repository-us-east-1\" KmsMasterKeyAlias=\"SB-KMS\" KmsMasterKeyId=\"e4c733c5-9fbe-4a90-bda1-6f0362bc9b89\" SQSQueueBaseName=\"sqs-queue\" SQSDeadLetterQueueBaseName=\"dead-letter-queue\" DelaySeconds=\"0\" MaximumMessageSize=\"262144\" MessageRetentionPeriod=\"345600\" ReceiveMessageWaitTimeSeconds=\"0\" VisibilityTimeout=\"300\" SNSTopicBaseName=\"sns-topic\" SNSTopicDisplayName=\"SNS Topic name for sending result notification\" SNSSubscriptionEmail=\"subhamay.aws@mailinator.com\" DynamoDBTableBaseName=\"random-strings\" DynamoDBTablePartitionKey=\"sequenceNo\" DynamoDBTablePartitionKeyAttributeType=\"N\" DynamoDBTableSortKey=\"generatedUnixTime\" DynamoDBTableSortKeyAttributeType=\"N\" LambdaExecutionRoleBaseName=\"lambda-execution-role\" LambdaExecutionPolicyBaseName=\"lambda-execution-policy\" LambdaFunctionGenDataBaseName=\"generate-data\" LambdaFunctionPutDataBaseName=\"insert-data\" StepFunctionExecutionRoleBaseName=\"step-function-execution-role\" StepFunctionExecutionPolicyBaseName=\"step-function-execution-policy\" StepFunctionBaseName=\"state-machine\" AlarmThresholdLambdaInvocations=\"5\" AlarmPeriodInSecondsLambdaInvocations=\"900\" DatapointsToAlarmLambdaInvocations=\"1\" EvaluationPeriodsForLambdaInvocations=\"1\" AlarmComparisonOperatorLambdaInvocations=\"GreaterThanOrEqualToThreshold\" AlarmThresholdLambdaErrors=\"2\" AlarmPeriodInSecondsLambdaErrors=\"900\" DatapointsToAlarmLambdaErrors=\"1\" EvaluationPeriodsForLambdaErrors=\"1\" AlarmComparisonOperatorLambdaErrors=\"GreaterThanOrEqualToThreshold\" AlarmThresholdLambdaThrottles=\"3\" AlarmPeriodInSecondsLambdaThrottles=\"600\" DatapointsToAlarmLambdaThrottles=\"1\" EvaluationPeriodsForLambdaThrottles=\"1\" AlarmComparisonOperatorLambdaThrottles=\"GreaterThanOrEqualToThreshold\" AlarmThresholdLambdaDuration=\"500\" AlarmPeriodInSecondsLambdaDuration=\"900\" DatapointsToAlarmLambdaDuration=\"1\" EvaluationPeriodsForLambdaDuration=\"1\" AlarmComparisonOperatorLambdaDuration=\"GreaterThanOrEqualToThreshold\" AlarmThresholdLambdaConcurrentExecutions=\"3\" AlarmPeriodInSecondsLambdaConcurrentExecutions=\"60\" DatapointsToAlarmLambdaConcurrentExecutions=\"1\" EvaluationPeriodsForLambdaConcurrentExecutions=\"1\" AlarmComparisonOperatorLambdaConcurrentExecutions=\"GreaterThanOrEqualToThreshold\""
+image_repositories = []
