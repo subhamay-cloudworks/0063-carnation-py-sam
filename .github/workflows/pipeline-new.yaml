@@ -1,4 +1,4 @@
-name: SAM Ci/CD Pipeline
+name: SAM CI/CD Pipeline
 
 on:
   workflow_dispatch:
@@ -16,7 +16,11 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event job - test."
+    - uses: actions/checkout@v3
+    - run: |
+        echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event job - test."
+        echo ${FEATURE_BRANCH_NAME##*/} 
+        # trigger the tests here
 
   delete-feature:
     if: startsWith(github.event.ref, 'feature') && github.event_name == 'delete'
