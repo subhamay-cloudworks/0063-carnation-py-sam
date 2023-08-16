@@ -6,7 +6,7 @@ on:
       - 'main'
       - 'feature**'
   delete:
-
+  workflow_dispatch:
 
 env:
   SAM_TEMPLATE: template.yaml
